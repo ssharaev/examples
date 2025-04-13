@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebAuthn Test - Enhanced</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 20px;
+      background-color: #f4f7f6;
+      color: #333;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      background-color: #fff;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      max-width: 500px;
+      width: 100%;
+      text-align: center;
+    }
+
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 25px;
+    }
+
+    /* Sections Styling */
+    #authStatus, #loginSection, #webauthnActions {
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #eee;
+    }
+    #webauthnActions {
+      border-bottom: none; /* No border for the last section */
+      padding-bottom: 0;
+    }
+
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+      text-align: left;
+      color: #555;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: calc(100% - 20px); /* Account for padding */
+      padding: 10px;
+      margin-bottom: 15px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box; /* Include padding in width */
+    }
+
+    button {
+      background-color: #3498db;
+      color: white;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 5px;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    button:disabled {
+      background-color: #bdc3c7;
+      cursor: not-allowed;
+    }
+
+    #loginForm button[type="submit"] {
+      background-color: #2ecc71;
+    }
+    #loginForm button[type="submit"]:hover {
+      background-color: #27ae60;
+    }
+
+    /* Logout button style */
+    #logoutButton {
+      background-color: #e74c3c; /* Red color for logout */
+      margin-left: 15px; /* Add some space next to the username */
+    }
+    #logoutButton:hover {
+      background-color: #c0392b;
+    }
+
+
+    #userInfo {
+      font-size: 1.1em;
+      color: #27ae60;
+      font-weight: bold;
+      display: flex; /* Use flexbox to align text and button */
+      justify-content: center; /* Center items horizontally */
+      align-items: center; /* Align items vertically */
+      flex-wrap: wrap; /* Allow wrapping if space is tight */
+    }
+    #userInfo span { /* Target the text span specifically */
+      margin-right: 10px; /* Space between text and button */
+    }
+
+
+    #errorMessage {
+      color: #e74c3c;
+      margin-top: 15px;
+      min-height: 1.2em; /* Reserve space */
+      font-weight: bold;
+    }
+
+    /* Initially hide sections/elements */
+    #loginSection, #userInfo, #logoutButton {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>WebAuthn Test</h1>
+
+  <!-- Area to display auth status or login form -->
+  <div id="authStatus">
+    <div id="userInfo">
+      <span id="userInfoText"></span> <!-- Text will go here -->
+      <button id="logoutButton">Logout</button> <!-- Logout button added here -->
+    </div>
+    <div id="loginSection">
+      <h2>Login with Password</h2>
+      <form id="loginForm">
+        <label for="username">Username:</label>
+        <input type="text" id="username" name="username" required>
+        <label for="password">Password:</label>
+        <input type="password" id="password" name="password" required>
+        <button type="submit">Login</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- WebAuthn Actions -->
+  <div id="webauthnActions">
+    <h2>WebAuthn Actions</h2>
+    <button id="registerButton">Register WebAuthn</button>
+    <button id="loginButton">Login with WebAuthn</button>
+  </div>
+
+  <!-- Error Message Area -->
+  <div id="errorMessage"></div>
+
+</div>
+
+<script>
+  // DOM Elements
+  const loginForm = document.getElementById('loginForm');
+  const registerButton = document.getElementById('registerButton');
+  const loginButton = document.getElementById('loginButton'); // WebAuthn Login
+  const logoutButton = document.getElementById('logoutButton'); // Logout button
+  const userInfoDiv = document.getElementById('userInfo');
+  const userInfoTextSpan = document.getElementById('userInfoText'); // Span for user text
+  const loginSectionDiv = document.getElementById('loginSection');
+  const errorMessageDiv = document.getElementById('errorMessage');
+
+  // Base64URL Helper (same as before)
+  const base64url_default = {
+    encode: function (buffer) {
+      const base64 = window.btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    },
+    decode: function (base64url) {
+      const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");
+      const binStr = window.atob(base64);
+      const bin = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) {
+        bin[i] = binStr.charCodeAt(i);
+      }
+      return bin.buffer;
+    }
+  };
+
+  // --- Utility Functions ---
+
+  function displayError(message) {
+    errorMessageDiv.textContent = message;
+    console.error(message); // Also log to console
+  }
+
+  function clearError() {
+    errorMessageDiv.textContent = '';
+  }
+
+  function updateUI(isLoggedIn, username = '') {
+    clearError(); // Clear previous errors on UI update
+    if (isLoggedIn) {
+      userInfoTextSpan.textContent = `User is logged in: ${username}`; // Update text span
+      userInfoDiv.style.display = 'flex'; // Use flex display for alignment
+      logoutButton.style.display = 'inline-block'; // Show logout button
+      loginSectionDiv.style.display = 'none';
+      loginButton.style.display = 'none';
+      registerButton.style.display = 'inline-block';
+    } else {
+      userInfoDiv.style.display = 'none';
+      logoutButton.style.display = 'none'; // Hide logout button
+      loginSectionDiv.style.display = 'block';
+      loginButton.style.display = 'inline-block';
+      // registerButton.style.display = 'none';
+    }
+  }
+
+  // --- Authentication Check ---
+
+  async function checkAuthStatus() {
+    try {
+      // Add cache-busting parameter to prevent overly aggressive caching of this status check
+      const response = await fetch('/api/auth/user/info?t=' + Date.now());
+
+      if (response.ok) {
+        const userData = await response.json();
+        updateUI(true, userData.username || 'Unknown User');
+      } else if (response.status === 401 || response.status === 403) {
+        updateUI(false);
+      } else {
+        displayError(`Error checking auth status: ${response.status} ${response.statusText}`);
+        updateUI(false);
+      }
+    } catch (error) {
+      displayError(`Network error checking auth status: ${error.message}`);
+      updateUI(false);
+    }
+  }
+
+  // --- Event Listeners ---
+
+  // Password Login Form
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    clearError();
+    const formData = new FormData(loginForm);
+    const data = {
+      username: formData.get('username'),
+      password: formData.get('password')
+    };
+
+    try {
+      const response = await fetch('/api/auth/sign-in', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // 'X-CSRF-TOKEN': 'your-dynamic-csrf-token' // Add if needed
+        },
+        body: JSON.stringify(data)
+      });
+
+      if (response.ok) {
+        console.log('Password login successful');
+        await checkAuthStatus(); // Refresh UI
+      } else {
+        const errorText = await response.text();
+        displayError(`Login failed: ${response.status} ${response.statusText}. ${errorText}`);
+        updateUI(false);
+      }
+    } catch (error) {
+      displayError(`Network error during login: ${error.message}`);
+      updateUI(false);
+    }
+  });
+
+  // Logout Button
+  logoutButton.addEventListener('click', async () => {
+    clearError();
+    try {
+      // Use POST for logout as it changes server state (the session)
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          // IMPORTANT: Add CSRF token if your logout endpoint requires it
+          // 'X-CSRF-TOKEN': 'your-dynamic-csrf-token'
+        }
+      });
+
+      if (response.ok) {
+        console.log('Logout successful');
+        await checkAuthStatus(); // Refresh UI to show logged-out state
+      } else {
+        const errorText = await response.text();
+        displayError(`Logout failed: ${response.status} ${response.statusText}. ${errorText}`);
+        // Keep the user logged-in UI state if logout fails? Or force refresh?
+        // Let's refresh status anyway, maybe the session was partially invalidated.
+        await checkAuthStatus();
+      }
+    } catch (error) {
+      displayError(`Network error during logout: ${error.message}`);
+      // Attempt to refresh status even on network error
+      await checkAuthStatus();
+    }
+  });
+
+
+  // WebAuthn Registration
+  registerButton.addEventListener('click', async () => {
+    clearError();
+    try {
+      const optionsResponse = await fetch('/webauthn/register/options', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+          // 'X-CSRF-TOKEN': 'your-dynamic-csrf-token' // Add if needed
+        }
+        // body: JSON.stringify({ username: document.getElementById('username').value }) // May need username here
+      });
+
+      if (!optionsResponse.ok) {
+        const errorBody = await optionsResponse.text();
+        throw new Error(`Failed to get registration options: ${optionsResponse.status} ${optionsResponse.statusText} - ${errorBody}`);
+      }
+      const options = await optionsResponse.json();
+
+      if (!options.challenge || !options.user || !options.user.id) {
+        throw new Error("Invalid registration options received from server.");
+      }
+      // *** Decode using base64url_default.decode ***
+      options.challenge = base64url_default.decode(options.challenge);
+      options.user.id = base64url_default.decode(options.user.id);
+      // If server sends excludeCredentials, decode their IDs too
+      if (options.excludeCredentials) {
+        options.excludeCredentials = options.excludeCredentials.map(cred => ({
+          ...cred,
+          id: base64url_default.decode(cred.id)
+        }));
+      }
+
+
+      const credential = await navigator.credentials.create({ publicKey: options });
+
+      const credentialData = {
+        id: credential.id,
+        rawId: base64url_default.encode(credential.rawId),
+        type: credential.type,
+        response: {
+          attestationObject: base64url_default.encode(credential.response.attestationObject),
+          clientDataJSON: base64url_default.encode(credential.response.clientDataJSON)
+        },
+        authenticatorAttachment: credential.authenticatorAttachment, // Include for context
+      };
+
+      const registerResponse = await fetch('/webauthn/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': '123' // Replace with dynamic token if needed
+        },
+        body: JSON.stringify(credentialData)
+      });
+
+      if (!registerResponse.ok) {
+        const errorText = await registerResponse.text();
+        throw new Error(`Registration verification failed: ${registerResponse.status}. ${errorText}`);
+      }
+
+      alert('WebAuthn registration successful!');
+      await checkAuthStatus();
+
+    } catch (error) {
+      displayError(`Registration Error: ${error.message}`);
+      console.error("Registration process failed:", error);
+    }
+  });
+
+  // WebAuthn Login
+  loginButton.addEventListener('click', async () => {
+    clearError();
+    try {
+      const optionsResponse = await fetch('/webauthn/authenticate/options', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+          // 'X-CSRF-TOKEN': 'your-dynamic-csrf-token' // Add if needed
+        }
+        // body: JSON.stringify({ username: document.getElementById('username').value }) // Might need username
+      });
+
+      if (!optionsResponse.ok) {
+        const errorBody = await optionsResponse.text();
+        throw new Error(`Failed to get authentication options: ${optionsResponse.status} ${optionsResponse.statusText} - ${errorBody}`);
+      }
+      const options = await optionsResponse.json();
+
+      if (!options.challenge) { // Allow options.allowCredentials to be empty if server permits any registered key
+        throw new Error("Invalid authentication options received from server (missing challenge).");
+      }
+      // *** Decode using base64url_default.decode ***
+      options.challenge = base64url_default.decode(options.challenge);
+      if (options.allowCredentials) {
+        options.allowCredentials = options.allowCredentials.map(cred => {
+          if (!cred || !cred.id) {
+            console.warn("Skipping credential with missing ID in options");
+            return null;
+          }
+          try {
+            cred.id = base64url_default.decode(cred.id);
+            return cred;
+          } catch(e) {
+            console.warn(`Failed to decode credential ID: ${cred.id}`, e);
+            return null;
+          }
+        }).filter(cred => cred !== null);
+      } else {
+        options.allowCredentials = []; // Ensure it's an array if missing
+      }
+
+
+      const assertion = await navigator.credentials.get({ publicKey: options });
+
+      const assertionData = {
+        id: assertion.id,
+        rawId: base64url_default.encode(assertion.rawId),
+        type: assertion.type,
+        response: {
+          authenticatorData: base64url_default.encode(assertion.response.authenticatorData),
+          clientDataJSON: base64url_default.encode(assertion.response.clientDataJSON),
+          signature: base64url_default.encode(assertion.response.signature),
+          userHandle: assertion.response.userHandle ? base64url_default.encode(assertion.response.userHandle) : null
+        },
+        authenticatorAttachment: assertion.authenticatorAttachment, // Include for context
+      };
+
+      const loginResponse = await fetch('/login/webauthn', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': '123', // Replace with dynamic token if needed
+        },
+        body: JSON.stringify(assertionData)
+      });
+
+      if (!loginResponse.ok) {
+        const errorText = await loginResponse.text();
+        throw new Error(`WebAuthn login failed: ${loginResponse.status}. ${errorText}`);
+      }
+
+      console.log('WebAuthn login successful!');
+      await checkAuthStatus();
+
+    } catch (error) {
+      if (error.name === 'NotAllowedError') {
+        displayError('WebAuthn operation cancelled by user.');
+      } else {
+        displayError(`WebAuthn Login/Auth Error: ${error.message}`);
+      }
+      console.error("WebAuthn login/auth process failed:", error);
+    }
+  });
+
+
+  // --- Initial Page Load ---
+  document.addEventListener('DOMContentLoaded', () => {
+    checkAuthStatus(); // Check authentication status when the page is ready
+  });
+
+</script>
+
+</body>
+</html>
